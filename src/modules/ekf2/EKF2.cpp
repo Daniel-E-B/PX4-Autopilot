@@ -160,7 +160,6 @@ EKF2::EKF2(bool multi_mode, const px4::wq_config_t &config, bool replay_mode):
 	_param_ekf2_pcoef_yp(_params->static_pressure_coef_yp),
 	_param_ekf2_pcoef_yn(_params->static_pressure_coef_yn),
 	_param_ekf2_pcoef_z(_params->static_pressure_coef_z),
-	_param_ekf2_move_test(_params->is_moving_scaler),
 	_param_ekf2_mag_check(_params->check_mag_strength),
 	_param_ekf2_synthetic_mag_z(_params->synthesize_mag_z),
 	_param_ekf2_gsf_tas_default(_params->EKFGSF_tas_default)
@@ -347,8 +346,6 @@ void EKF2::Run()
 				_gyro_calibration_count = imu.gyro_calibration_count;
 
 			} else {
-				bool reset_actioned = false;
-
 				if ((imu.accel_calibration_count != _accel_calibration_count)
 				    || (imu.accel_device_id != _device_id_accel)) {
 
@@ -360,8 +357,6 @@ void EKF2::Run()
 
 					// reset bias learning
 					_accel_cal = {};
-
-					reset_actioned = true;
 				}
 
 				if ((imu.gyro_calibration_count != _gyro_calibration_count)
@@ -375,12 +370,6 @@ void EKF2::Run()
 
 					// reset bias learning
 					_gyro_cal = {};
-
-					reset_actioned = true;
-				}
-
-				if (reset_actioned) {
-					SelectImuStatus();
 				}
 			}
 		}
@@ -422,8 +411,6 @@ void EKF2::Run()
 
 					// reset bias learning
 					_accel_cal = {};
-
-					SelectImuStatus();
 				}
 
 				if (_device_id_gyro != sensor_selection.gyro_device_id) {
@@ -434,8 +421,6 @@ void EKF2::Run()
 
 					// reset bias learning
 					_gyro_cal = {};
-
-					SelectImuStatus();
 				}
 			}
 		}
@@ -443,8 +428,6 @@ void EKF2::Run()
 
 	if (imu_updated) {
 		const hrt_abstime now = imu_sample_new.time_us;
-
-		UpdateImuStatus();
 
 		// push imu data into estimator
 		_ekf.setIMUData(imu_sample_new);
@@ -496,6 +479,7 @@ void EKF2::Run()
 			if (_vehicle_land_detected_sub.copy(&vehicle_land_detected)) {
 				const bool was_in_air = _ekf.control_status_flags().in_air;
 				_ekf.set_in_air_status(!vehicle_land_detected.landed);
+				_ekf.set_vehicle_at_rest(vehicle_land_detected.at_rest);
 
 				if (_armed && (_param_ekf2_gnd_eff_dz.get() > 0.f)) {
 					if (!_had_valid_terrain) {
@@ -1152,7 +1136,6 @@ void EKF2::PublishStatus(const hrt_abstime &timestamp)
 
 	_ekf.get_ekf_lpos_accuracy(&status.pos_horiz_accuracy, &status.pos_vert_accuracy);
 	_ekf.get_ekf_soln_status(&status.solution_status_flags);
-	_ekf.getImuVibrationMetrics().copyTo(status.vibe);
 
 	// reset counters
 	status.reset_count_vel_ne = _ekf.state_reset_status().velNE_counter;
@@ -1357,48 +1340,6 @@ float EKF2::filter_altitude_ellipsoid(float amsl_hgt)
 	}
 
 	return amsl_hgt + _wgs84_hgt_offset;
-}
-
-void EKF2::SelectImuStatus()
-{
-	for (uint8_t imu_instance = 0; imu_instance < MAX_NUM_IMUS; imu_instance++) {
-		uORB::Subscription imu_status_sub{ORB_ID(vehicle_imu_status), imu_instance};
-
-		vehicle_imu_status_s imu_status{};
-		imu_status_sub.copy(&imu_status);
-
-		if (imu_status.accel_device_id == _device_id_accel) {
-			_vehicle_imu_status_sub.ChangeInstance(imu_instance);
-			return;
-		}
-	}
-
-	PX4_WARN("%d - IMU status not found for accel %" PRId32 ", gyro %" PRId32, _instance, _device_id_accel,
-		 _device_id_gyro);
-}
-
-void EKF2::UpdateImuStatus()
-{
-	vehicle_imu_status_s imu_status;
-
-	if (_vehicle_imu_status_sub.update(&imu_status)) {
-		if (imu_status.accel_device_id != _device_id_accel) {
-			SelectImuStatus();
-			return;
-		}
-
-		const float dt = _ekf.get_dt_imu_avg();
-
-		// accel -> delta velocity
-		_ekf.setDeltaVelocityHighFrequencyVibrationMetric(imu_status.accel_vibration_metric * dt);
-
-		// gyro -> delta angle
-		_ekf.setDeltaAngleHighFrequencyVibrationMetric(imu_status.gyro_vibration_metric * dt);
-
-		// note: the coning metric uses the cross product of two consecutive angular velocities
-		// this is why the conversion to delta angle requires dt^2
-		_ekf.setDeltaAngleConingMetric(imu_status.gyro_coning_vibration * dt * dt);
-	}
 }
 
 void EKF2::UpdateAirspeedSample(ekf2_timestamps_s &ekf2_timestamps)
@@ -1791,6 +1732,9 @@ void EKF2::UpdateAccelCalibration(const hrt_abstime &timestamp)
 		return;
 	}
 
+	// State variance assumed for accelerometer bias storage.
+	// This is a reference variance used to calculate the fraction of learned accelerometer bias that will be used to update the stored value.
+	// Larger values cause a larger fraction of the learned biases to be used.
 	static constexpr float max_var_allowed = 1e-3f;
 	static constexpr float max_var_ratio = 1e2f;
 
@@ -1811,8 +1755,12 @@ void EKF2::UpdateAccelCalibration(const hrt_abstime &timestamp)
 		if (_accel_cal.last_us != 0) {
 			_accel_cal.total_time_us += timestamp - _accel_cal.last_us;
 
-			// consider bias estimates stable when we have accumulated sufficient time
+			// Start checking accel bias estimates when we have accumulated sufficient calibration time
 			if (_accel_cal.total_time_us > 30_s) {
+				if (!_accel_cal.cal_available) {
+					PX4_DEBUG("%d accel bias now stable", _instance);
+				}
+
 				_accel_cal.cal_available = true;
 			}
 		}
@@ -1820,12 +1768,20 @@ void EKF2::UpdateAccelCalibration(const hrt_abstime &timestamp)
 		_accel_cal.last_us = timestamp;
 
 	} else {
+		// conditions are NOT OK for learning accelerometer bias, reset
+		if (_accel_cal.total_time_us > 0) {
+			PX4_DEBUG("%d, clearing learned accel bias", _instance);
+		}
+
 		_accel_cal = {};
 	}
 }
 
 void EKF2::UpdateGyroCalibration(const hrt_abstime &timestamp)
 {
+	// State variance assumed for accelerometer bias storage.
+	// This is a reference variance used to calculate the fraction of learned accelerometer bias that will be used to update the stored value.
+	// Larger values cause a larger fraction of the learned biases to be used.
 	static constexpr float max_var_allowed = 1e-3f;
 	static constexpr float max_var_ratio = 1e2f;
 
@@ -1840,8 +1796,12 @@ void EKF2::UpdateGyroCalibration(const hrt_abstime &timestamp)
 		if (_gyro_cal.last_us != 0) {
 			_gyro_cal.total_time_us += timestamp - _gyro_cal.last_us;
 
-			// consider bias estimates stable when we have accumulated sufficient time
+			// Start checking gyro bias estimates when we have accumulated sufficient calibration time
 			if (_gyro_cal.total_time_us > 30_s) {
+				if (!_gyro_cal.cal_available) {
+					PX4_DEBUG("%d gyro bias now stable", _instance);
+				}
+
 				_gyro_cal.cal_available = true;
 			}
 		}
@@ -1849,7 +1809,11 @@ void EKF2::UpdateGyroCalibration(const hrt_abstime &timestamp)
 		_gyro_cal.last_us = timestamp;
 
 	} else {
-		// conditions are NOT OK for learning bias, reset
+		// conditions are NOT OK for learning gyro bias, reset
+		if (_gyro_cal.total_time_us > 0) {
+			PX4_DEBUG("%d, clearing learned gyro bias", _instance);
+		}
+
 		_gyro_cal = {};
 	}
 }
@@ -1858,23 +1822,12 @@ void EKF2::UpdateMagCalibration(const hrt_abstime &timestamp)
 {
 	// Check if conditions are OK for learning of magnetometer bias values
 	// the EKF is operating in the correct mode and there are no filter faults
-
-	static constexpr float max_var_allowed = 1e-3f;
-	static constexpr float max_var_ratio = 1e2f;
-
-	const Vector3f bias_variance{_ekf.getMagBiasVariance()};
-
-	bool valid = _ekf.control_status_flags().in_air
-		     && (_ekf.fault_status().value == 0)
-		     && (bias_variance.max() < max_var_allowed)
-		     && (bias_variance.max() < max_var_ratio * bias_variance.min());
-
-	if (valid && _ekf.control_status_flags().mag_3D) {
+	if (_ekf.control_status_flags().in_air && _ekf.control_status_flags().mag_3D && (_ekf.fault_status().value == 0)) {
 
 		if (_mag_cal.last_us != 0) {
 			_mag_cal.total_time_us += timestamp - _mag_cal.last_us;
 
-			// consider bias estimates stable when we have accumulated sufficient time
+			// Start checking mag bias estimates when we have accumulated sufficient calibration time
 			if (_mag_cal.total_time_us > 30_s) {
 				_mag_cal.cal_available = true;
 			}
@@ -1887,13 +1840,12 @@ void EKF2::UpdateMagCalibration(const hrt_abstime &timestamp)
 		// but keep the accumulated calibration time
 		_mag_cal.last_us = 0;
 
-		if (!valid) {
+		if (_ekf.fault_status().value != 0) {
 			// if a filter fault has occurred, assume previous learning was invalid and do not
 			// count it towards total learning time.
 			_mag_cal.total_time_us = 0;
 		}
 	}
-
 
 	if (!_armed) {
 		// update stored declination value
