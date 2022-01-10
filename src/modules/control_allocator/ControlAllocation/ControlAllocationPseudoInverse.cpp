@@ -44,10 +44,13 @@
 void
 ControlAllocationPseudoInverse::setEffectivenessMatrix(
 	const matrix::Matrix<float, ControlAllocation::NUM_AXES, ControlAllocation::NUM_ACTUATORS> &effectiveness,
-	const ActuatorVector &actuator_trim, const ActuatorVector &linearization_point, int num_actuators)
+	const ActuatorVector &actuator_trim, const ActuatorVector &linearization_point, int num_actuators,
+	bool update_normalization_scale)
 {
-	ControlAllocation::setEffectivenessMatrix(effectiveness, actuator_trim, linearization_point, num_actuators);
+	ControlAllocation::setEffectivenessMatrix(effectiveness, actuator_trim, linearization_point, num_actuators,
+			update_normalization_scale);
 	_mix_update_needed = true;
+	_normalization_needs_update = update_normalization_scale;
 }
 
 void
@@ -55,37 +58,48 @@ ControlAllocationPseudoInverse::updatePseudoInverse()
 {
 	if (_mix_update_needed) {
 		matrix::geninv(_effectiveness, _mix);
+
+		if (_normalization_needs_update) {
+			updateControlAllocationMatrixScale();
+			_normalization_needs_update = false;
+		}
+
 		normalizeControlAllocationMatrix();
 		_mix_update_needed = false;
 	}
 }
 
 void
-ControlAllocationPseudoInverse::normalizeControlAllocationMatrix()
+ControlAllocationPseudoInverse::updateControlAllocationMatrixScale()
 {
+	// Same scale on roll and pitch
 	if (_normalize_rpy) {
-		// Same scale on roll and pitch
 		const float roll_norm_sq = _mix.col(0).norm_squared();
 		const float pitch_norm_sq = _mix.col(1).norm_squared();
+
 		_control_allocation_scale(0) = sqrtf(fmaxf(roll_norm_sq, pitch_norm_sq) / (_num_actuators / 2.f));
 		_control_allocation_scale(1) = _control_allocation_scale(0);
 
-		if (_control_allocation_scale(0) > FLT_EPSILON) {
-			_mix.col(0) /= _control_allocation_scale(0);
-			_mix.col(1) /= _control_allocation_scale(1);
-		}
-
 		// Scale yaw separately
 		_control_allocation_scale(2) = _mix.col(2).max();
-
-		if (_control_allocation_scale(2) > FLT_EPSILON) {
-			_mix.col(2) /= _control_allocation_scale(2);
-		}
 
 	} else {
 		_control_allocation_scale(0) = 1.f;
 		_control_allocation_scale(1) = 1.f;
 		_control_allocation_scale(2) = 1.f;
+	}
+}
+
+void
+ControlAllocationPseudoInverse::normalizeControlAllocationMatrix()
+{
+	if (_control_allocation_scale(0) > FLT_EPSILON) {
+		_mix.col(0) /= _control_allocation_scale(0);
+		_mix.col(1) /= _control_allocation_scale(1);
+	}
+
+	if (_control_allocation_scale(2) > FLT_EPSILON) {
+		_mix.col(2) /= _control_allocation_scale(2);
 	}
 
 	// Scale thrust by the sum of the norm of the thrust vectors (which is invariant to rotation)
