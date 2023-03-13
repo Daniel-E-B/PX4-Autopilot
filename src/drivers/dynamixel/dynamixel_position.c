@@ -60,6 +60,7 @@
 #include <uORB/topics/actuator_controls.h>
 #include <unistd.h>
 #include <systemlib/err.h>
+#include <v2.0/custom_messages/mavlink.h>
 
 #include "message.h"
 #ifdef CONFIG_ARCH_BOARD_PX4_FMU_V2
