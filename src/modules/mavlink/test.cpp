@@ -7,11 +7,11 @@ public:
     }
     static const char *get_name_static()
     {
-        return "MAVLINK_GIMBAL_ANGLE";
+        return "MAVLINK_GIMBAL_ANGLE_CMD";
     }
     static uint16_t get_id_static()
     {
-        return MAVLINK_MSG_ID_CA_TRAJECTORY;
+        return MAVLINK_MSG_ID_GIMBAL_ANGLE_CMD;
     }
     uint16_t get_id()
     {
@@ -23,7 +23,7 @@ public:
     }
     unsigned get_size()
     {
-        return MAVLINK_MSG_ID_CA_TRAJECTORY_LEN + MAVLINK_NUM_NON_PAYLOAD_BYTES;
+        return MAVLINK_MSG_ID_GIMBAL_ANGLE_CMD_LEN + MAVLINK_NUM_NON_PAYLOAD_BYTES;
     }
 
 private:
@@ -37,15 +37,15 @@ protected:
 
     bool send() override
     {
-            mavlink_ca_trajectory_t _msg_ca_trajectory;  //make sure mavlink_ca_trajectory_t is the definition of your custom MAVLink message
+            mavlink_gimbal_angle_cmd_t _msg_gimbal_angle_cmd_t;
 
-            _msg_ca_trajectory.timestamp = ;
-            _msg_ca_trajectory.time_start_usec = ;
-            _msg_ca_trajectory.time_stop_usec  = _;
-            _msg_ca_trajectory.coefficients =_;
-            _msg_ca_trajectory.seq_id = _;
+            _msg_gimbal_angle_cmd_t.a1 = 25.0;
+            _msg_gimbal_angle_cmd_t.a2 = 35.0;
+            _msg_gimbal_angle_cmd_t.a3 = 45.0;
+            _msg_gimbal_angle_cmd_t.a4 = 55.0;
+            _msg_gimbal_angle_cmd_t.a5 = 65.0;
 
-            mavlink_msg_ca_trajectory_send_struct(_mavlink->get_channel(), &_msg_ca_trajectory);
+            mavlink_msg_gimbal_angle_cmd_send_struct(_mavlink->get_channel(), &_msg_gimbal_angle_cmd_t);
 
             return true;
     }
