@@ -274,5 +274,7 @@ else
 fi
 . ${R}etc/init.d/rc.logging
 
+mavlink stream -r 50 -s GIMBAL_ANGLE_CMD -u 14556
+
 mavlink boot_complete
 replay trystart

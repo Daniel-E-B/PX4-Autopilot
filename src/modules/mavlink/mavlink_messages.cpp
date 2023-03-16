@@ -55,6 +55,7 @@
 #include <uORB/Subscription.hpp>
 #include <uORB/SubscriptionMultiArray.hpp>
 #include <uORB/topics/vehicle_status.h>
+#include <uORB/topics/gimbal_angle_cmd.h>
 
 #include "streams/ACTUATOR_CONTROL_TARGET.hpp"
 #include "streams/ACTUATOR_OUTPUT_STATUS.hpp"
@@ -148,7 +149,7 @@ public:
     }
     static const char *get_name_static()
     {
-        return "MAVLINK_GIMBAL_ANGLE_CMD";
+        return "GIMBAL_ANGLE_CMD";
     }
     static uint16_t get_id_static()
     {
@@ -168,6 +169,7 @@ public:
     }
 
 private:
+    uORB::Subscription _sub{ORB_ID(gimbal_angle_cmd)};
     /* do not allow top copying this class */
     MavlinkStreamGimbalAngle(MavlinkStreamGimbalAngle &);
     MavlinkStreamGimbalAngle& operator = (const MavlinkStreamGimbalAngle &);
@@ -178,17 +180,23 @@ protected:
 
     bool send() override
     {
+	struct gimbal_angle_cmd_s _gimbal_angle_cmd;
+
+	if (_sub.update(&_ca_trajectory)) {
             mavlink_gimbal_angle_cmd_t _msg_gimbal_angle_cmd_t;
 
-            _msg_gimbal_angle_cmd_t.a1 = 25.0;
-            _msg_gimbal_angle_cmd_t.a2 = 35.0;
-            _msg_gimbal_angle_cmd_t.a3 = 45.0;
-            _msg_gimbal_angle_cmd_t.a4 = 55.0;
-            _msg_gimbal_angle_cmd_t.a5 = 65.0;
+            _msg_gimbal_angle_cmd_t.a1 = _gimbal_angle_cmd.angle1;
+            _msg_gimbal_angle_cmd_t.a2 = _gimbal_angle_cmd.angle2;
+            _msg_gimbal_angle_cmd_t.a3 = _gimbal_angle_cmd.angle3;
+            _msg_gimbal_angle_cmd_t.a4 = _gimbal_angle_cmd.angle4;
+            _msg_gimbal_angle_cmd_t.a5 = _gimbal_angle_cmd.angle5;
 
             mavlink_msg_gimbal_angle_cmd_send_struct(_mavlink->get_channel(), &_msg_gimbal_angle_cmd_t);
 
             return true;
+	}
+
+	return false;
     }
 };
 
