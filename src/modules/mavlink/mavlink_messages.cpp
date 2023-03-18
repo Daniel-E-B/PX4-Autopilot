@@ -182,7 +182,7 @@ protected:
     {
 	struct gimbal_angle_cmd_s _gimbal_angle_cmd;
 
-	if (_sub.update(&_ca_trajectory)) {
+	if (_sub.update(&_gimbal_angle_cmd)) {
             mavlink_gimbal_angle_cmd_t _msg_gimbal_angle_cmd_t;
 
             _msg_gimbal_angle_cmd_t.a1 = _gimbal_angle_cmd.angle1;
