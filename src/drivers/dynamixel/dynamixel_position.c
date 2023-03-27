@@ -56,11 +56,13 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <termios.h>
+#include <uORB/uORB.h>
 #include <uORB/topics/actuator_armed.h>
 #include <uORB/topics/actuator_controls.h>
+#include <uORB/topics/gimbal_angle_cmd.h>
 #include <unistd.h>
 #include <systemlib/err.h>
-#include <v2.0/custom_messages/mavlink.h>
+// #include <v2.0/custom_messages/mavlink.h>
 
 #include "message.h"
 #ifdef CONFIG_ARCH_BOARD_PX4_FMU_V2
@@ -184,16 +186,22 @@ bool set_angles(const float *angles)
 {
 	int32_t int_angles[NUM_DYNAMIXELS];
 
+
+	struct gimbal_angle_cmd_s gimbalCmd;
+	orb_advert_t gimbal_angle_pub = orb_advertise(ORB_ID(gimbal_angle_cmd), &gimbalCmd);
+
 	for (uint16_t i = 0; i < NUM_DYNAMIXELS; ++i) {
 		int_angles[i] = (int)(((float)ANGLE_RES) * (angles[i] + (float)M_PI));
 	}
 
-	uint8_t msg[WRITE_32_BIT_MESSAGE_SIZE];
-	build_write_32_bit_message(GOAL_POSITION_ADDRESS, int_angles, msg);
+	gimbalCmd.angle1 = int_angles[0];
+	gimbalCmd.angle2 = int_angles[1];
+	gimbalCmd.angle3 = int_angles[2];
+	gimbalCmd.angle4 = int_angles[3];
+	gimbalCmd.angle5 = int_angles[4];
+	gimbalCmd.angle6 = int_angles[5];
 
-	if (!write_uart(msg, WRITE_32_BIT_MESSAGE_SIZE)) {
-		return false;
-	}
+	orb_publish(ORB_ID(gimbal_angle_cmd), gimbal_angle_pub, &gimbalCmd);
 
 	return true;
 }
