@@ -202,7 +202,7 @@ bool set_angles(const float *angles)
 	gimbalCmd.angle6 = int_angles[5];
 
 	orb_publish(ORB_ID(gimbal_angle_cmd), gimbal_angle_pub, &gimbalCmd);
-
+	usleep (2000000);
 	return true;
 }
 
